@@ -1,48 +1,28 @@
-Weechat plugin to convert markdown formatting to IRC codes when receiving messages.
+# crayfish-weechat-markdown
 
-## Features
+WeeChat plugin that colorizes markdown from OpenClaw agents in IRC.
 
-- **bold** or __bold__ → IRC bold
-- *italic* or _italic_ → IRC italic
-- # Heading → Bold # with color (c34-c29 for levels 1-6)
-- Preserves newlines
+OpenClaw agents output markdown by default. This plugin makes it readable
+in your WeeChat IRC client.
 
-## Installation
+## Install
 
 ```bash
-# Install markdown parser
 pip3 install markdown-it-py
-
-# Copy plugin to WeeChat
 cp markdown_irc.py ~/.weechat/python/autoload/
-
-# Load in WeeChat (or restart)
-/python load ~/.weechat/python/autoload/markdown_irc.py
 ```
 
-## Usage
+Then `/script load markdown_irc.py` in WeeChat (or restart).
 
-Just type markdown in your messages:
+## Supported
 
-```
-**bold** *italic* text
-# Title
-## Subtitle
-```
+- **bold**, *italic*
+- # Headings (color-coded by level)
+- Bullet and numbered lists
+- `inline code` and fenced code blocks
 
-## Configuration
-
-```
-/set plugins.var.python.markdown_irc.enabled on
-/set plugins.var.python.markdown_irc.use_alt_format off
-```
-
-## Testing
+## Test
 
 ```bash
-# Visual test (outside WeeChat)
 ./test_visual.sh
-
-# Unit tests
-python3 test_markdown_irc.py
 ```

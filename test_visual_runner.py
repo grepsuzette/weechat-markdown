@@ -1,48 +1,13 @@
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 """
-WeeChat Markdown to IRC converter plugin.
-Converts markdown formatting to IRC color/formatting codes on message send.
+Test runner - standalone markdown to IRC converter.
+Uses markdown-it-py when available, regex fallback otherwise.
 """
 
-import weechat
+import sys
 import re
 
-# Plugin info
-SCRIPT_NAME = "markdown_irc"
-SCRIPT_AUTHOR = "Chevette <chevette@irc>"
-SCRIPT_VERSION = "0.2"
-SCRIPT_LICENSE = "MIT"
-SCRIPT_DESC = "Convert markdown formatting to IRC codes on message send"
-
-# IRC format codes (using Ctrl-C format: \x03 + code)
-# Note: WeeChat uses \x02 for bold, \x1F for underline, \x0F for reset
-# But we can also use the \x03 prefix format: \x03b for bold, \x03o for reset
-IRC_BOLD = "\x03b"
-IRC_UNDERLINE = "\x03u"
-IRC_ITALIC = "\x0375"
-IRC_RESET = "\x03o"
-
-# IRC color codes for markdown headings
-# Maps heading level 1-6 to color codes c34-c29
-HEADING_COLORS = ["c34", "c33", "c32", "c31", "c30", "c29"]
-
-# Additional color codes
-IRC_BULLET_COLOR = "\x0313"  # Magenta for bullets and numbers
-IRC_FENCE_COLOR = "\x0314"   # Gray for code blocks
-IRC_CODE_COLOR = "\x0314"    # Gray for inline code
-
-# Alternative format codes (single control chars)
-ALT_BOLD = "\x02"
-ALT_UNDERLINE = "\x1F"
-ALT_RESET = "\x0F"
-
-# Configuration
-settings = {
-    "enabled": "on",  # on/off
-    "use_alt_format": "off",  # Use single-char format codes instead of \x03 prefix
-}
-
-# Try to import markdown-it-py
+# Import markdown-it-py directly
 try:
     from markdown_it import MarkdownIt
     from markdown_it.tree import SyntaxTreeNode
@@ -50,26 +15,33 @@ try:
 except ImportError:
     HAS_MARKDOWN = False
 
+# IRC format codes (from markdown_irc.py)
+IRC_BOLD = "\x03b"
+IRC_ITALIC = "\x0375"
+IRC_RESET = "\x03o"
+HEADING_COLORS = ["c34", "c33", "c32", "c31", "c30", "c29"]
+
+# Additional color codes
+IRC_BULLET_COLOR = "\x0313"  # Magenta for bullets and numbers
+IRC_FENCE_COLOR = "\x0314"   # Gray for code blocks
+IRC_CODE_COLOR = "\x0314"    # Gray for inline code
+
 # Global counter for ordered lists
 _list_counters = {}
 
-
-def md_to_irc_converter(node, options=None, env=None, list_id=None):
-    """
-    Custom renderer for markdown-it that outputs IRC formatting codes.
-    Uses SyntaxTreeNode which collapses paired tokens into single nodes.
-    """
+def md_to_irc(node, list_id=None):
+    """Convert markdown tree to IRC formatting codes."""
     global _list_counters
     result = []
 
     if node.type == "root":
         if hasattr(node, 'children') and node.children:
             for child in node.children:
-                result.append(md_to_irc_converter(child, options, env, list_id=list_id))
+                result.append(md_to_irc(child, list_id=list_id))
     elif node.type == "paragraph":
         if hasattr(node, 'children') and node.children:
             for child in node.children:
-                result.append(md_to_irc_converter(child, options, env, list_id=list_id))
+                result.append(md_to_irc(child, list_id=list_id))
         result.append("\n")
     elif node.type == "text":
         result.append(node.content if hasattr(node, 'content') else '')
@@ -83,28 +55,26 @@ def md_to_irc_converter(node, options=None, env=None, list_id=None):
             result.append("\x03" + HEADING_COLORS[level_num])
         if hasattr(node, 'children') and node.children:
             for child in node.children:
-                result.append(md_to_irc_converter(child, options, env, list_id=list_id))
+                result.append(md_to_irc(child, list_id=list_id))
         result.append(IRC_RESET + "\n\n")
     elif node.type == "strong":
         # SyntaxTreeNode collapses strong_open/close into single 'strong' node
-        use_alt = weechat.config_get_plugin("use_alt_format") == "on"
-        result.append(ALT_BOLD if use_alt else IRC_BOLD)
+        result.append(IRC_BOLD)
         if hasattr(node, 'children') and node.children:
             for child in node.children:
-                result.append(md_to_irc_converter(child, options, env, list_id=list_id))
-        result.append(ALT_RESET if use_alt else IRC_RESET)
+                result.append(md_to_irc(child, list_id=list_id))
+        result.append(IRC_RESET)
     elif node.type == "em":
         # SyntaxTreeNode collapses emph_open/close into single 'em' node
-        use_alt = weechat.config_get_plugin("use_alt_format") == "on"
-        result.append(ALT_BOLD if use_alt else IRC_ITALIC)  # No single italic char in alt mode
+        result.append(IRC_ITALIC)
         if hasattr(node, 'children') and node.children:
             for child in node.children:
-                result.append(md_to_irc_converter(child, options, env, list_id=list_id))
-        result.append(ALT_RESET if use_alt else IRC_RESET)
+                result.append(md_to_irc(child, list_id=list_id))
+        result.append(IRC_RESET)
     elif node.type == "inline":
         if hasattr(node, 'children') and node.children:
             for child in node.children:
-                result.append(md_to_irc_converter(child, options, env, list_id=list_id))
+                result.append(md_to_irc(child, list_id=list_id))
     elif node.type == "softbreak":
         result.append("\n")
     elif node.type == "hardbreak":
@@ -113,7 +83,7 @@ def md_to_irc_converter(node, options=None, env=None, list_id=None):
     elif node.type == "bullet_list":
         if hasattr(node, 'children') and node.children:
             for child in node.children:
-                result.append(md_to_irc_converter(child, options, env, list_id=list_id))
+                result.append(md_to_irc(child, list_id=list_id))
         result.append("\n")
     # Ordered list support
     elif node.type == "ordered_list":
@@ -122,7 +92,7 @@ def md_to_irc_converter(node, options=None, env=None, list_id=None):
         _list_counters[current_list_id] = 0
         if hasattr(node, 'children') and node.children:
             for child in node.children:
-                result.append(md_to_irc_converter(child, options, env, list_id=current_list_id))
+                result.append(md_to_irc(child, list_id=current_list_id))
         result.append("\n")
     elif node.type == "list_item":
         if hasattr(node, 'children') and node.children:
@@ -137,7 +107,7 @@ def md_to_irc_converter(node, options=None, env=None, list_id=None):
                 # Bullet list item - use * format
                 result.append(IRC_BULLET_COLOR + "* " + IRC_RESET)
             for child in node.children:
-                result.append(md_to_irc_converter(child, options, env, list_id=list_id))
+                result.append(md_to_irc(child, list_id=list_id))
     # Code block support (fence with ```)
     elif node.type == "fence":
         result.append(IRC_FENCE_COLOR + "```\n")
@@ -160,20 +130,14 @@ def md_to_irc_converter(node, options=None, env=None, list_id=None):
 
     return "".join(result)
 
-
 def simple_md_to_irc(text):
-    """
-    Simple regex-based markdown to IRC converter (fallback if markdown-it not available).
-    """
+    """Simple regex-based markdown to IRC converter (fallback)."""
     # Convert headings (must be at start of line)
-    # Keep # characters in bold, apply color to the rest
-    # Process from h6 down to h1 to avoid partial matches
     for level in range(6, 0, -1):
         hashes = '#' * level
         color_code = HEADING_COLORS[level - 1]
-        # Match heading at start of line, keep hashes in bold, apply color to text
         text = re.sub(
-            r'^(' + hashes + r')\s+(.*)$',
+            r'^(#{' + str(level) + r'})\s+(.*)$',
             lambda m: IRC_BOLD + m.group(1) + IRC_RESET + ' ' + '\x03' + color_code + m.group(2) + IRC_RESET,
             text,
             flags=re.MULTILINE
@@ -202,75 +166,22 @@ def simple_md_to_irc(text):
 
     return text
 
+def main():
+    if len(sys.argv) > 1:
+        input_text = sys.argv[1]
+    else:
+        input_text = sys.stdin.read()
 
-def modifier_cb(data, modifier, modifier_data, string):
-    """
-    Modifier callback to convert markdown in displayed messages.
-    Called before any line is printed (incoming messages, outgoing echoes, etc.)
-    """
-    global _list_counters
-    # Reset list counters for each message
-    _list_counters = {}
-
-    # Check if plugin is enabled
-    if weechat.config_get_plugin("enabled") != "on":
-        return string
-
-    # Parse modifier_data: format is "buffer_pointer;tags"
-    # We only want to process actual chat messages, not system messages
-    parts = modifier_data.split(";", 1)
-    tags = parts[1] if len(parts) > 1 else ""
-    
-    # Only process messages with relevant tags (privmsg, notice, etc.)
-    # This avoids processing system messages, joins, parts, etc.
-    relevant_tags = ["irc_privmsg", "irc_notice", "notify_message", "notify_private"]
-    if not any(tag in tags for tag in relevant_tags):
-        return string
-
-    # Check if message contains markdown formatting
-    md_patterns = [r'\*\*', r'__', r'\*', r'_', r'^\* ', r'^\d+\. ', r'^#', r'^```', r'`[^`]+`']
-    has_md = any(re.search(pattern, string, re.MULTILINE) for pattern in md_patterns)
-
-    if not has_md:
-        return string
-
-    # Convert markdown to IRC codes
     if HAS_MARKDOWN:
         md = MarkdownIt()
-        tokens = md.parse(string)
+        tokens = md.parse(input_text)
         tree = SyntaxTreeNode(tokens)
-        converted = md_to_irc_converter(tree)
+        output = md_to_irc(tree)
     else:
-        converted = simple_md_to_irc(text=string)
+        # Fallback to regex when markdown-it-py is not installed
+        output = simple_md_to_irc(input_text)
 
-    return converted
+    sys.stdout.write(output)
 
-
-def config_cb(data, option, value):
-    """Configuration callback."""
-    weechat.config_set_plugin(option, value)
-    return weechat.WEECHAT_RC_OK
-
-
-def init_config():
-    """Initialize plugin configuration."""
-    for option, default_value in settings.items():
-        if not weechat.config_is_set_plugin(option):
-            weechat.config_set_plugin(option, default_value)
-
-
-if __name__ == "__main__":
-    weechat.register(SCRIPT_NAME, SCRIPT_AUTHOR, SCRIPT_VERSION, SCRIPT_LICENSE, SCRIPT_DESC, "", "")
-
-    # Initialize configuration
-    init_config()
-
-    # Hook for modifier on printed lines (before display)
-    # This processes ALL messages: incoming from server, outgoing echoes, etc.
-    weechat.hook_modifier("weechat_print", "modifier_cb", "")
-
-    # Print info
-    if HAS_MARKDOWN:
-        weechat.prnt("", f"{SCRIPT_NAME}: Loaded with markdown-it-py support - will colorize incoming markdown messages")
-    else:
-        weechat.prnt("", f"{SCRIPT_NAME}: Loaded with simple regex fallback - will colorize incoming markdown messages")
+if __name__ == '__main__':
+    main()
