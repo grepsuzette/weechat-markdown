@@ -47,8 +47,31 @@ def parse_irc_prefix(prefix):
     return nick
 
 
+def strip_ircv3_tags(message):
+    """Strip IRCv3 tags from message. Returns (tags_dict, message_without_tags)."""
+    tags = {}
+    if message.startswith("@"):
+        # Tags end at first space
+        space_idx = message.find(" ")
+        if space_idx == -1:
+            return tags, message
+        tags_str = message[1:space_idx]
+        message = message[space_idx + 1:]
+        # Parse tags: tag1=val1;tag2=val2
+        for tag in tags_str.split(";"):
+            if "=" in tag:
+                key, val = tag.split("=", 1)
+                tags[key] = val
+            else:
+                tags[tag] = ""
+    return tags, message
+
+
 def batch_in_cb(data, signal, signal_data):
     """Handle incoming BATCH messages."""
+    # Strip IRCv3 tags if present
+    _, signal_data = strip_ircv3_tags(signal_data)
+
     # Format: :server BATCH +id draft/multiline #channel
     # or:     :server BATCH -id
     parts = signal_data.split()
@@ -94,45 +117,41 @@ def batch_in_cb(data, signal, signal_data):
 
 def privmsg_in_cb(data, signal, signal_data):
     """Handle incoming PRIVMSG - buffer if part of active batch."""
-    # Format: :nick!user@host PRIVMSG #target :message
-    # Check if there's an active batch for this
+    # Strip IRCv3 tags and extract batch tag if present
+    tags, signal_data = strip_ircv3_tags(signal_data)
 
+    # Format: :nick!user@host PRIVMSG #target :message
     # Parse the message
     if not signal_data.startswith(":"):
         return weechat.WEECHAT_RC_OK
-    
+
     space_idx = signal_data.find(" ")
     if space_idx == -1:
         return weechat.WEECHAT_RC_OK
-    
+
     prefix = signal_data[1:space_idx]
     rest = signal_data[space_idx+1:]
-    
+
     nick = parse_irc_prefix(prefix)
-    
-    # Check for batch tag in message tags (IRCv3)
-    # Tags come before the command, but weechat might strip them
-    # For now, check if we have ANY active batch for this nick's target
-    
+
     # Parse target and message
     parts = rest.split(" :", 1)
     if len(parts) < 2:
         return weechat.WEECHAT_RC_OK
-    
+
     target = parts[0].split()[0] if " " in parts[0] else parts[0]
     message = parts[1]
-    
-    # Check if this PRIVMSG is part of an active batch
-    # We match by target and that we have a batch waiting for a nick
-    for batch_id, batch in list(_active_batches.items()):
-        if batch["target"] == target:
-            # This PRIVMSG belongs to this batch
-            if batch["nick"] is None:
-                batch["nick"] = nick
-            batch["lines"].append(message)
-            # Don't let weechat display this message
-            return weechat.WEECHAT_RC_OK_EAT
-    
+
+    # Check if this PRIVMSG is part of an active batch using the batch tag
+    batch_id = tags.get("batch")
+    if batch_id and batch_id in _active_batches:
+        batch = _active_batches[batch_id]
+        if batch["nick"] is None:
+            batch["nick"] = nick
+        batch["lines"].append(message)
+        # Don't let weechat display this message
+        return weechat.WEECHAT_RC_OK_EAT
+
     return weechat.WEECHAT_RC_OK
 
 
