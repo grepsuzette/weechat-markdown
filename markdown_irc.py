@@ -21,16 +21,8 @@ SCRIPT_VERSION = "0.3"
 SCRIPT_LICENSE = "MIT"
 SCRIPT_DESC = "Combine draft/multiline messages and optionally colorize markdown"
 
-# IRC format codes
-IRC_BOLD = "\x02"
-IRC_RESET = "\x0F"
-IRC_COLOR = "\x03"
-
-# Batch state: {batch_id: {"target": str, "lines": [str], "nick": str}}
+# Batch state: {batch_id: {"target": str, "lines": [str], "nick": str, "closed": bool}}
 _active_batches = {}
-
-# Nick tracking for batches (batch id -> nick)
-_batch_nick = {}
 
 
 def get_config(option, default=""):
@@ -75,43 +67,65 @@ def batch_in_cb(data, signal, signal_data):
     # Format: :server BATCH +id draft/multiline #channel
     # or:     :server BATCH -id
     parts = signal_data.split()
-    if len(parts) < 4:
+    if len(parts) < 3:
         return weechat.WEECHAT_RC_OK
 
-    # parts: [":server", "BATCH", "+id", "draft/multiline", "#channel"]
+    # parts: [":server", "BATCH", "+id", "draft/multiline", ":#channel"]
+    # or:    [":server", "BATCH", ":-id"]
     if parts[1] != "BATCH":
         return weechat.WEECHAT_RC_OK
 
-    batch_cmd = parts[2]  # +id or -id
+    batch_cmd = parts[2].lstrip(":")  # +id or -id (strip : if trailing param)
 
     if batch_cmd.startswith("+"):
         # Batch start
         batch_id = batch_cmd[1:]
         if "draft/multiline" in signal_data:
-            target = parts[4] if len(parts) > 4 else ""
-            _active_batches[batch_id] = {"target": target, "lines": [], "nick": None}
+            target = parts[4].lstrip(":") if len(parts) > 4 else ""
+            _active_batches[batch_id] = {"target": target, "lines": [], "nick": None, "closed": False}
     elif batch_cmd.startswith("-"):
-        # Batch end - combine and print
+        # Batch end - schedule processing after a short delay to let PRIVMSG arrive
         batch_id = batch_cmd[1:]
         if batch_id in _active_batches:
-            batch = _active_batches.pop(batch_id)
-            if batch["lines"] and batch["nick"]:
-                combined = "\n".join(batch["lines"])
-                target = batch["target"]
-                nick = batch["nick"]
-                
-                # Find the buffer for this target
-                buf = weechat.buffer_search("irc", f"server.{target}") or \
-                      weechat.buffer_search("irc", f"#{target}") or \
-                      weechat.current_buffer()
-                
-                # Colorize if enabled
-                if get_config("colorize_markdown", "off") == "on":
-                    combined = simple_md_to_irc(combined)
-                
-                # Print combined message
-                weechat.prnt(buf, f"{weechat.color('chat_nick')}{nick}\t{combined}")
-    
+            # Mark batch as closed - will be processed by timer
+            _active_batches[batch_id]["closed"] = True
+            # Schedule processing after 100ms
+            weechat.hook_timer(100, 0, 1, "process_closed_batch_cb", batch_id)
+
+    return weechat.WEECHAT_RC_OK
+
+
+def process_closed_batch_cb(data, remaining_calls):
+    """Process a closed batch after delay."""
+    batch_id = data
+    if batch_id not in _active_batches:
+        return weechat.WEECHAT_RC_OK
+
+    batch = _active_batches.get(batch_id)
+    if not batch or not batch.get("closed"):
+        return weechat.WEECHAT_RC_OK
+
+    # Pop and process
+    _active_batches.pop(batch_id, None)
+
+    if batch["lines"] and batch["nick"]:
+        combined = "\n".join(batch["lines"])
+        target = batch["target"]
+        nick = batch["nick"]
+
+        # Find the buffer for this target
+        buf = weechat.buffer_search("irc", f"sidero.{target}") or \
+              weechat.buffer_search("irc", target) or \
+              weechat.current_buffer()
+
+        # Colorize if enabled
+        colorize = get_config("colorize_markdown", "off")
+        if colorize == "on":
+            combined = simple_md_to_irc(combined)
+
+        # Print combined message
+        weechat.prnt(buf, f"{weechat.color('chat_nick')}{nick}\t{combined}")
+
     return weechat.WEECHAT_RC_OK
 
 
@@ -156,33 +170,49 @@ def privmsg_in_cb(data, signal, signal_data):
 
 
 def simple_md_to_irc(text):
-    """Simple markdown to IRC colorization."""
-    # Bold
-    text = re.sub(r'\*\*(.*?)\*\*', IRC_BOLD + r'\1' + IRC_RESET, text)
-    text = re.sub(r'__(.*?)__', IRC_BOLD + r'\1' + IRC_RESET, text)
-    
-    # Italic (using underline as approximation)
-    text = re.sub(r'\*(.*?)\*', IRC_COLOR + "37" + r'\1' + IRC_RESET, text)
-    text = re.sub(r'_(.*?)_', IRC_COLOR + "37" + r'\1' + IRC_RESET, text)
-    
-    # Code
-    text = re.sub(r'`(.*?)`', IRC_COLOR + "14" + r'\1' + IRC_RESET, text)
-    
-    # Headers
+    """Simple markdown to WeeChat colorization using weechat.color()."""
+    if not weechat:
+        return text
+
+    # Bold: **text** or __text__
+    bold_start = weechat.color("bold")
+    bold_end = weechat.color("-bold")
+    text = re.sub(r'\*\*(.*?)\*\*', bold_start + r'\1' + bold_end, text)
+    text = re.sub(r'__(.*?)__', bold_start + r'\1' + bold_end, text)
+
+    # Italic: *text* or _text_
+    italic_start = weechat.color("italic")
+    italic_end = weechat.color("-italic")
+    text = re.sub(r'\*(.*?)\*', italic_start + r'\1' + italic_end, text)
+    text = re.sub(r'_(.*?)_', italic_start + r'\1' + italic_end, text)
+
+    # Code: `text` (cyan)
+    code_start = weechat.color("cyan")
+    code_end = weechat.color("reset")
+    text = re.sub(r'`(.*?)`', code_start + r'\1' + code_end, text)
+
+    # Headers: # through ######
+    # IRC color codes: h1=47, h2=46, h3=45, h4=44, h5=43, h6=42
+    header_colors = ["47", "46", "45", "44", "43", "42"]  # level 1-6
+    hash_color = weechat.color("49")  # Color for # characters
+    reset = weechat.color("reset")
     for level in range(6, 0, -1):
         hashes = '#' * level
-        color = str(36 - level)  # Different colors for different levels
+        color = header_colors[level - 1]
+        header_color = weechat.color(color)
         text = re.sub(
             f'^{re.escape(hashes)}\\s+(.*)$',
-            IRC_BOLD + hashes + IRC_RESET + ' ' + IRC_COLOR + color + r'\1' + IRC_RESET,
+            hash_color + hashes + reset + ' ' + header_color + r'\1' + reset,
             text,
             flags=re.MULTILINE
         )
-    
-    # Bullets
-    text = re.sub(r'^\* (.*)$', IRC_COLOR + "13* " + IRC_RESET + r'\1', text, flags=re.MULTILINE)
-    text = re.sub(r'^(\d+)\. (.*)$', IRC_COLOR + "13" + r'\1. ' + IRC_RESET + r'\2', text, flags=re.MULTILINE)
-    
+
+    # Bullets: * or -
+    bullet_color = weechat.color("magenta")
+    reset = weechat.color("reset")
+    text = re.sub(r'^[\*\-] (.*)$', bullet_color + '* ' + reset + r'\1', text, flags=re.MULTILINE)
+    text = re.sub(r'^(\d+)\. (.*)$', bullet_color + r'\1. ' + reset + r'\2', text, flags=re.MULTILINE)
+
     return text
 
 
