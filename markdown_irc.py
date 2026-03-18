@@ -52,15 +52,19 @@ def batch_in_cb(data, signal, signal_data):
     # Format: :server BATCH +id draft/multiline #channel
     # or:     :server BATCH -id
     parts = signal_data.split()
-    if len(parts) < 3:
+    if len(parts) < 4:
         return weechat.WEECHAT_RC_OK
-    
-    batch_cmd = parts[1]  # +id or -id
-    
+
+    # parts: [":server", "BATCH", "+id", "draft/multiline", "#channel"]
+    if parts[1] != "BATCH":
+        return weechat.WEECHAT_RC_OK
+
+    batch_cmd = parts[2]  # +id or -id
+
     if batch_cmd.startswith("+"):
         # Batch start
         batch_id = batch_cmd[1:]
-        if len(parts) >= 5 and "draft/multiline" in signal_data:
+        if "draft/multiline" in signal_data:
             target = parts[4] if len(parts) > 4 else ""
             _active_batches[batch_id] = {"target": target, "lines": [], "nick": None}
     elif batch_cmd.startswith("-"):
@@ -92,7 +96,7 @@ def privmsg_in_cb(data, signal, signal_data):
     """Handle incoming PRIVMSG - buffer if part of active batch."""
     # Format: :nick!user@host PRIVMSG #target :message
     # Check if there's an active batch for this
-    
+
     # Parse the message
     if not signal_data.startswith(":"):
         return weechat.WEECHAT_RC_OK
@@ -177,11 +181,11 @@ def init_config():
 if HAS_WEECHAT and __name__ == "__main__":
     weechat.register(SCRIPT_NAME, SCRIPT_AUTHOR, SCRIPT_VERSION, SCRIPT_LICENSE, SCRIPT_DESC, "", "")
     init_config()
-    
-    # Hook BATCH and PRIVMSG for draft/multiline support
-    weechat.hook_signal("irc_in_batch", "batch_in_cb", "")
-    weechat.hook_signal("irc_in_privmsg", "privmsg_in_cb", "")
-    
+
+    # Hook BATCH and PRIVMSG - signal includes server name like "server,irc_in_PRIVMSG"
+    weechat.hook_signal("*,irc_in_batch", "batch_in_cb", "")
+    weechat.hook_signal("*,irc_in_privmsg", "privmsg_in_cb", "")
+
     weechat.prnt("", f"{SCRIPT_NAME}: Loaded - draft/multiline support enabled")
     if get_config("colorize_markdown", "off") == "on":
         weechat.prnt("", f"{SCRIPT_NAME}: Markdown colorization enabled")
