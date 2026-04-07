@@ -25,3 +25,5 @@ See [WeeChat Python Scripts documentation](https://weechat.org/files/doc/stable/
 /set plugins.var.python.markdown_irc.interpret_underscores off
 ```
 
+<img width="886" height="1009" alt="570521131-6cf8d023-bc4d-4483-8ef5-0761664d0a06" src="https://github.com/user-attachments/assets/52d8721c-a542-43a4-b433-4308e6337412" />
+
