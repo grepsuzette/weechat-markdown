@@ -17,13 +17,43 @@ class MockWeechat:
     
     def register(self, *args):
         pass
-    
+
+    def hook_signal(self, *args):
+        return ""
+
+    def hook_timer(self, *args):
+        return ""
+
     def prnt(self, *args):
         self.printed.append(args)
     
     def hook_modifier(self, *args):
         pass
-    
+
+    def color(self, color_name):
+        # Mock color codes
+        colors = {
+            "bold": "\x03b",
+            "-bold": "\x03o",
+            "italic": "\x0375",
+            "-italic": "\x03o",
+            "cyan": "\x0310",
+            "magenta": "\x036",
+            "reset": "\x03o",
+            "chat_nick": "\x03b",
+        }
+        # Header colors (level 1-6)
+        header_colors = {
+            "47": "\x03c34",  # h1
+            "46": "\x03c33",  # h2
+            "45": "\x03c32",  # h3
+            "44": "\x03c31",  # h4
+            "43": "\x03c30",  # h5
+            "42": "\x03c29",  # h6
+            "49": "\x03b",    # hash color
+        }
+        return colors.get(color_name, header_colors.get(color_name, ""))
+
     def config_is_set_plugin(self, option):
         return True
     
@@ -61,15 +91,16 @@ def test_italic_conversion():
     """Test italic markdown conversion."""
     test_cases = [
         ("*italic*", "\x0375italic\x03o"),
-        ("_italic_", "\x0375italic\x03o"),
+        ("_italic_", "_italic_"),  # Underscores NOT converted by default
         ("This is *italic* text", "This is \x0375italic\x03o text"),
         ("*multiple* *words*", "\x0375multiple\x03o \x0375words\x03o"),
+        ("filename_some_thing.md", "filename_some_thing.md"),  # Filenames with underscores unchanged
     ]
     
     for input_text, expected in test_cases:
         result = simple_md_to_irc(input_text)
         assert result == expected, f"Failed: '{input_text}' -> '{result}', expected '{expected}'"
-    print("✓ Italic conversion tests passed")
+    print("✓ Italic conversion tests passed (underscores disabled by default)")
 
 def test_heading_conversion():
     """Test heading markdown conversion."""

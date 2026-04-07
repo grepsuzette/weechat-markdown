@@ -180,11 +180,12 @@ def simple_md_to_irc(text):
     text = re.sub(r'\*\*(.*?)\*\*', bold_start + r'\1' + bold_end, text)
     text = re.sub(r'__(.*?)__', bold_start + r'\1' + bold_end, text)
 
-    # Italic: *text* or _text_
+    # Italic: *text* or _text_ (underscore interpretation optional)
     italic_start = weechat.color("italic")
     italic_end = weechat.color("-italic")
     text = re.sub(r'\*(.*?)\*', italic_start + r'\1' + italic_end, text)
-    text = re.sub(r'_(.*?)_', italic_start + r'\1' + italic_end, text)
+    if get_config("interpret_underscores", "off") == "on":
+        text = re.sub(r'_(.*?)_', italic_start + r'\1' + italic_end, text)
 
     # Code: `text` (cyan)
     code_start = weechat.color("cyan")
@@ -219,7 +220,8 @@ def simple_md_to_irc(text):
 def init_config():
     if HAS_WEECHAT and weechat:
         settings = {
-            "colorize_markdown": "off",  # Enable markdown colorization
+            "colorize_markdown": "on",  # Enable markdown colorization
+            "interpret_underscores": "off",  # Interpret underscores as italic (disabled by default)
         }
         for option, default_value in settings.items():
             if not weechat.config_is_set_plugin(option):
