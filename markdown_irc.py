@@ -61,6 +61,9 @@ def strip_ircv3_tags(message):
 
 def batch_in_cb(data, signal, signal_data):
     """Handle incoming BATCH messages."""
+    # Extract server name from signal (format: "servername,irc_in_batch")
+    server_name = signal.split(",")[0] if "," in signal else ""
+
     # Strip IRCv3 tags if present
     _, signal_data = strip_ircv3_tags(signal_data)
 
@@ -71,7 +74,7 @@ def batch_in_cb(data, signal, signal_data):
         return weechat.WEECHAT_RC_OK
 
     # parts: [":server", "BATCH", "+id", "draft/multiline", ":#channel"]
-    # or:    [":server", "BATCH", ":-id"]
+    # or:    [":server", "BATCH", "-id"]
     if parts[1] != "BATCH":
         return weechat.WEECHAT_RC_OK
 
@@ -82,7 +85,7 @@ def batch_in_cb(data, signal, signal_data):
         batch_id = batch_cmd[1:]
         if "draft/multiline" in signal_data:
             target = parts[4].lstrip(":") if len(parts) > 4 else ""
-            _active_batches[batch_id] = {"target": target, "lines": [], "nick": None, "closed": False}
+            _active_batches[batch_id] = {"target": target, "lines": [], "nick": None, "closed": False, "server_name": server_name}
     elif batch_cmd.startswith("-"):
         # Batch end - schedule processing after a short delay to let PRIVMSG arrive
         batch_id = batch_cmd[1:]
@@ -113,10 +116,16 @@ def process_closed_batch_cb(data, remaining_calls):
         target = batch["target"]
         nick = batch["nick"]
 
-        # Find the buffer for this target
-        buf = weechat.buffer_search("irc", f"sidero.{target}") or \
-              weechat.buffer_search("irc", target) or \
-              weechat.current_buffer()
+        # Find the buffer for this target using stored server name
+        server_name = batch.get("server_name", "")
+        buf = None
+        if server_name:
+            buf = weechat.buffer_search("irc", f"{server_name}.{target}")
+        if not buf:
+            buf = weechat.buffer_search("irc", target)
+        if not buf:
+            weechat.prnt("", f"markdown_irc: buffer not found for {server_name}.{target}, using current")
+            buf = weechat.current_buffer()
 
         # Colorize if enabled
         colorize = get_config("colorize_markdown", "off")
